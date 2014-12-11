@@ -476,25 +476,56 @@ static void video_log_status(struct device *dev)
 }
 
 static int query_control(struct device *dev, unsigned int id,
-			 struct v4l2_queryctrl *query)
+			 struct v4l2_query_ext_ctrl *query)
 {
+	struct v4l2_queryctrl q;
 	int ret;
 
 	memset(query, 0, sizeof(*query));
 	query->id = id;
 
-	ret = ioctl(dev->fd, VIDIOC_QUERYCTRL, query);
-	if (ret < 0) {
+	ret = ioctl(dev->fd, VIDIOC_QUERY_EXT_CTRL, query);
+	if (ret < 0)
 		ret = -errno;
-		if (ret != -EINVAL)
-			printf("unable to query control 0x%8.8x: %s (%d).\n",
-			       id, strerror(errno), errno);
+	if (!ret || ret == -EINVAL)
+		return ret;
+
+	if (ret != -ENOTTY) {
+		printf("unable to query control 0x%8.8x: %s (%d).\n",
+		       id, strerror(-ret), -ret);
+		return ret;
 	}
 
-	return ret;
+	/*
+	 * If VIDIOC_QUERY_EXT_CTRL isn't available emulate it using
+	 * VIDIOC_QUERYCTRL.
+	 */
+	memset(&q, 0, sizeof(q));
+	q.id = id;
+
+	ret = ioctl(dev->fd, VIDIOC_QUERYCTRL, &q);
+	if (ret < 0) {
+		ret = -errno;
+		printf("unable to query control 0x%8.8x: %s (%d).\n",
+		       id, strerror(-ret), -ret);
+		return ret;
+	}
+
+	memset(query, 0, sizeof(*query));
+	query->id = q.id;
+	query->type = q.type;
+	memcpy(query->name, q.name, sizeof(query->name));
+	query->minimum = q.minimum;
+	query->maximum = q.maximum;
+	query->step = q.step;
+	query->default_value = q.default_value;
+	query->flags = q.flags;
+
+	return 0;
 }
 
-static int get_control(struct device *dev, const struct v4l2_queryctrl *query,
+static int get_control(struct device *dev,
+		       const struct v4l2_query_ext_ctrl *query,
 		       struct v4l2_ext_control *ctrl)
 {
 	struct v4l2_ext_controls ctrls;
@@ -544,7 +575,7 @@ static void set_control(struct device *dev, unsigned int id,
 {
 	struct v4l2_ext_controls ctrls;
 	struct v4l2_ext_control ctrl;
-	struct v4l2_queryctrl query;
+	struct v4l2_query_ext_ctrl query;
 	int64_t old_val = val;
 	int is_64;
 	int ret;
@@ -1124,9 +1155,9 @@ static int video_enable(struct device *dev, int enable)
 }
 
 static int video_for_each_control(struct device *dev,
-				  int(*callback)(struct device *dev, const struct v4l2_queryctrl *query))
+				  int(*callback)(struct device *dev, const struct v4l2_query_ext_ctrl *query))
 {
-	struct v4l2_queryctrl query;
+	struct v4l2_query_ext_ctrl query;
 	unsigned int nctrls = 0;
 	unsigned int id;
 	int ret;
@@ -1161,7 +1192,8 @@ static int video_for_each_control(struct device *dev,
 	return nctrls;
 }
 
-static void video_query_menu(struct device *dev, const struct v4l2_queryctrl *query,
+static void video_query_menu(struct device *dev,
+			     const struct v4l2_query_ext_ctrl *query,
 			     unsigned int value)
 {
 	struct v4l2_querymenu menu;
@@ -1184,7 +1216,8 @@ static void video_query_menu(struct device *dev, const struct v4l2_queryctrl *qu
 }
 
 static int video_print_control(struct device *dev,
-			       const struct v4l2_queryctrl *query, bool full)
+			       const struct v4l2_query_ext_ctrl *query,
+			       bool full)
 {
 	struct v4l2_ext_control ctrl;
 	char sval[24];
@@ -1210,7 +1243,7 @@ static int video_print_control(struct device *dev,
 		sprintf(sval, "%d", ctrl.value);
 
 	if (full)
-		printf("control 0x%08x `%s' min %d max %d step %d default %d current %s.\n",
+		printf("control 0x%08x `%s' min %lld max %lld step %lld default %lld current %s.\n",
 			query->id, query->name, query->minimum, query->maximum,
 			query->step, query->default_value, current);
 	else
@@ -1230,7 +1263,7 @@ static int video_print_control(struct device *dev,
 }
 
 static int __video_print_control(struct device *dev,
-				 const struct v4l2_queryctrl *query)
+				 const struct v4l2_query_ext_ctrl *query)
 {
 	return video_print_control(dev, query, true);
 }
@@ -2211,7 +2244,7 @@ int main(int argc, char *argv[])
 		video_log_status(&dev);
 
 	if (do_get_control) {
-		struct v4l2_queryctrl query;
+		struct v4l2_query_ext_ctrl query;
 
 		ret = query_control(&dev, ctrl_name, &query);
 		if (ret == 0)
