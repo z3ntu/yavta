@@ -971,7 +971,9 @@ static int video_free_buffers(struct device *dev)
 	return 0;
 }
 
-static int video_queue_buffer(struct device *dev, int index, enum buffer_fill_mode fill)
+static int video_queue_buffer(struct device *dev, int index,
+			      enum buffer_fill_mode fill,
+			      unsigned int request_id)
 {
 	struct v4l2_buffer buf;
 	struct v4l2_plane planes[VIDEO_MAX_PLANES];
@@ -984,6 +986,7 @@ static int video_queue_buffer(struct device *dev, int index, enum buffer_fill_mo
 	buf.index = index;
 	buf.type = dev->type;
 	buf.memory = dev->memtype;
+	buf.request = request_id;
 
 	if (video_is_output(dev)) {
 		buf.flags = dev->buffer_output_flags;
@@ -1035,7 +1038,7 @@ static int video_queue_buffer(struct device *dev, int index, enum buffer_fill_mo
 		}
 	}
 
-	ret = ioctl(dev->fd, VIDIOC_QBUF, &buf);
+	ret = ioctl(dev->fd, request_id ? VIDIOC_PREPARE_BUF : VIDIOC_QBUF, &buf);
 	if (ret < 0)
 		printf("Unable to queue buffer: %s (%d).\n",
 			strerror(errno), errno);
@@ -1474,14 +1477,15 @@ static int video_prepare_capture(struct device *dev, int nbufs, unsigned int off
 	return 0;
 }
 
-static int video_queue_all_buffers(struct device *dev, enum buffer_fill_mode fill)
+static int video_queue_all_buffers(struct device *dev, enum buffer_fill_mode fill,
+				   unsigned int request_id)
 {
 	unsigned int i;
 	int ret;
 
 	/* Queue the buffers. */
 	for (i = 0; i < dev->nbufs; ++i) {
-		ret = video_queue_buffer(dev, i, fill);
+		ret = video_queue_buffer(dev, i, fill, request_id);
 		if (ret < 0)
 			return ret;
 	}
@@ -1612,7 +1616,8 @@ unsigned int video_buffer_bytes_used(struct device *dev, struct v4l2_buffer *buf
 
 static int video_do_capture(struct device *dev, unsigned int nframes,
 	unsigned int skip, unsigned int delay, const char *pattern,
-	int do_requeue_last, int do_queue_late, enum buffer_fill_mode fill)
+	int do_requeue_last, int do_queue_late, enum buffer_fill_mode fill,
+	unsigned int request_id)
 {
 	struct v4l2_plane planes[VIDEO_MAX_PLANES];
 	struct v4l2_buffer buf;
@@ -1631,7 +1636,7 @@ static int video_do_capture(struct device *dev, unsigned int nframes,
 		goto done;
 
 	if (do_queue_late)
-		video_queue_all_buffers(dev, fill);
+		video_queue_all_buffers(dev, fill, request_id);
 
 	size = 0;
 	clock_gettime(CLOCK_MONOTONIC, &start);
@@ -1699,7 +1704,7 @@ static int video_do_capture(struct device *dev, unsigned int nframes,
 		if (i == nframes - dev->nbufs && !do_requeue_last)
 			continue;
 
-		ret = video_queue_buffer(dev, buf.index, fill);
+		ret = video_queue_buffer(dev, buf.index, fill, request_id);
 		if (ret < 0) {
 			printf("Unable to requeue buffer: %s (%d).\n",
 				strerror(errno), errno);
@@ -1781,6 +1786,7 @@ static void usage(const char *argv0)
 	printf("    --offset			User pointer buffer offset from page start\n");
 	printf("    --premultiplied		Color components are premultiplied by alpha value\n");
 	printf("    --queue-late		Queue buffers after streamon, not before\n");
+	printf("    --request id		Queue buffers with the given request ID\n");
 	printf("    --requeue-last		Requeue the last buffers before streamoff\n");
 	printf("    --timestamp-source		Set timestamp source on output buffers [eof, soe]\n");
 	printf("    --skip n			Skip the first n frames\n");
@@ -1804,6 +1810,7 @@ static void usage(const char *argv0)
 #define OPT_PREMULTIPLIED	269
 #define OPT_QUEUE_LATE		270
 #define OPT_DATA_PREFIX		271
+#define OPT_REQUEST		272
 
 static struct option opts[] = {
 	{"buffer-size", 1, 0, OPT_BUFFER_SIZE},
@@ -1831,6 +1838,7 @@ static struct option opts[] = {
 	{"quality", 1, 0, 'q'},
 	{"queue-late", 0, 0, OPT_QUEUE_LATE},
 	{"get-control", 1, 0, 'r'},
+	{"request", 1, 0, OPT_REQUEST},
 	{"requeue-last", 0, 0, OPT_REQUEUE_LAST},
 	{"realtime", 2, 0, 'R'},
 	{"size", 1, 0, 's'},
@@ -1884,6 +1892,7 @@ int main(int argc, char *argv[])
 	unsigned int userptr_offset = 0;
 	struct v4l2_fract time_per_frame = {1, 25};
 	enum v4l2_field field = V4L2_FIELD_ANY;
+	unsigned int request_id = 0;
 
 	/* Capture loop */
 	enum buffer_fill_mode fill_mode = BUFFER_FILL_NONE;
@@ -2051,6 +2060,9 @@ int main(int argc, char *argv[])
 		case OPT_QUEUE_LATE:
 			do_queue_late = 1;
 			break;
+		case OPT_REQUEST:
+			request_id = atoi(optarg);
+			break;
 		case OPT_REQUEUE_LAST:
 			do_requeue_last = 1;
 			break;
@@ -2190,7 +2202,7 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
-	if (!do_queue_late && video_queue_all_buffers(&dev, fill_mode)) {
+	if (!do_queue_late && video_queue_all_buffers(&dev, fill_mode, request_id)) {
 		video_close(&dev);
 		return 1;
 	}
@@ -2210,7 +2222,8 @@ int main(int argc, char *argv[])
 	}
 
 	if (video_do_capture(&dev, nframes, skip, delay, filename,
-			     do_requeue_last, do_queue_late, fill_mode) < 0) {
+			     do_requeue_last, do_queue_late, fill_mode,
+			     request_id) < 0) {
 		video_close(&dev);
 		return 1;
 	}
