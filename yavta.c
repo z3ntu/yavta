@@ -90,10 +90,16 @@ static bool video_is_mplane(struct device *dev)
 	       dev->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
 }
 
+static bool video_is_meta(struct device *dev)
+{
+	return dev->type == V4L2_BUF_TYPE_META_CAPTURE;
+}
+
 static bool video_is_capture(struct device *dev)
 {
 	return dev->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE ||
-	       dev->type == V4L2_BUF_TYPE_VIDEO_CAPTURE;
+	       dev->type == V4L2_BUF_TYPE_VIDEO_CAPTURE ||
+	       dev->type == V4L2_BUF_TYPE_META_CAPTURE;
 }
 
 static bool video_is_output(struct device *dev)
@@ -113,6 +119,7 @@ static struct {
 	{ V4L2_BUF_TYPE_VIDEO_CAPTURE, 1, "Video capture", "capture", },
 	{ V4L2_BUF_TYPE_VIDEO_OUTPUT, 1, "Video output mplanes", "output", },
 	{ V4L2_BUF_TYPE_VIDEO_OVERLAY, 0, "Video overlay", "overlay" },
+	{ V4L2_BUF_TYPE_META_CAPTURE, 1, "Meta-data capture", "meta-capture", },
 };
 
 static int v4l2_buf_type_from_string(const char *str)
@@ -380,6 +387,11 @@ static int video_querycap(struct device *dev, unsigned int *capabilities)
 {
 	struct v4l2_capability cap;
 	unsigned int caps;
+	bool has_video;
+	bool has_meta;
+	bool has_capture;
+	bool has_output;
+	bool has_mplane;
 	int ret;
 
 	memset(&cap, 0, sizeof cap);
@@ -390,10 +402,26 @@ static int video_querycap(struct device *dev, unsigned int *capabilities)
 	caps = cap.capabilities & V4L2_CAP_DEVICE_CAPS
 	     ? cap.device_caps : cap.capabilities;
 
-	printf("Device `%s' on `%s' (driver '%s') is a video %s (%s mplanes) device.\n",
+	has_video = caps & (V4L2_CAP_VIDEO_CAPTURE_MPLANE |
+			    V4L2_CAP_VIDEO_CAPTURE |
+			    V4L2_CAP_VIDEO_OUTPUT_MPLANE |
+			    V4L2_CAP_VIDEO_OUTPUT);
+	has_meta = caps & V4L2_CAP_META_CAPTURE;
+	has_capture = caps & (V4L2_CAP_VIDEO_CAPTURE_MPLANE |
+			      V4L2_CAP_VIDEO_CAPTURE |
+			      V4L2_CAP_META_CAPTURE);
+	has_output = caps & (V4L2_CAP_VIDEO_OUTPUT_MPLANE |
+			     V4L2_CAP_VIDEO_OUTPUT);
+	has_mplane = caps & (V4L2_CAP_VIDEO_CAPTURE_MPLANE |
+			     V4L2_CAP_VIDEO_OUTPUT_MPLANE);
+
+	printf("Device `%s' on `%s' (driver '%s') supports%s%s%s%s %s mplanes.\n",
 		cap.card, cap.bus_info, cap.driver,
-		caps & (V4L2_CAP_VIDEO_CAPTURE_MPLANE | V4L2_CAP_VIDEO_CAPTURE) ? "capture" : "output",
-		caps & (V4L2_CAP_VIDEO_CAPTURE_MPLANE | V4L2_CAP_VIDEO_OUTPUT_MPLANE) ? "with" : "without");
+		has_video ? " video," : "",
+		has_meta ? " meta-data," : "",
+		has_capture ? " capture," : "",
+		has_output ? " output," : "",
+		has_mplane ? "with" : "without");
 
 	*capabilities = caps;
 
@@ -410,6 +438,8 @@ static int cap_get_buf_type(unsigned int capabilities)
 		return  V4L2_BUF_TYPE_VIDEO_CAPTURE;
 	} else if (capabilities & V4L2_CAP_VIDEO_OUTPUT) {
 		return V4L2_BUF_TYPE_VIDEO_OUTPUT;
+	} else if (capabilities & V4L2_CAP_META_CAPTURE) {
+		return V4L2_BUF_TYPE_META_CAPTURE;
 	} else {
 		printf("Device supports neither capture nor output.\n");
 		return -EINVAL;
@@ -589,6 +619,14 @@ static int video_get_format(struct device *dev)
 				fmt.fmt.pix_mp.plane_fmt[i].bytesperline,
 				fmt.fmt.pix_mp.plane_fmt[i].sizeimage);
 		}
+	} else if (video_is_meta(dev)) {
+		dev->width = 0;
+		dev->height = 0;
+		dev->num_planes = 1;
+
+		printf("Meta-data format: %s (%08x) buffer size %u\n",
+			v4l2_format_name(fmt.fmt.meta.dataformat), fmt.fmt.meta.dataformat,
+					 fmt.fmt.meta.buffersize);
 	} else {
 		dev->width = fmt.fmt.pix.width;
 		dev->height = fmt.fmt.pix.height;
@@ -633,6 +671,9 @@ static int video_set_format(struct device *dev, unsigned int w, unsigned int h,
 			fmt.fmt.pix_mp.plane_fmt[i].bytesperline = stride;
 			fmt.fmt.pix_mp.plane_fmt[i].sizeimage = buffer_size;
 		}
+	} else if (video_is_meta(dev)) {
+		fmt.fmt.meta.dataformat = format;
+		fmt.fmt.meta.buffersize = buffer_size;
 	} else {
 		fmt.fmt.pix.width = w;
 		fmt.fmt.pix.height = h;
@@ -663,6 +704,10 @@ static int video_set_format(struct device *dev, unsigned int w, unsigned int h,
 				fmt.fmt.pix_mp.plane_fmt[i].bytesperline,
 				fmt.fmt.pix_mp.plane_fmt[i].sizeimage);
 		}
+	} else if (video_is_meta(dev)) {
+		printf("Meta-data format: %s (%08x) buffer size %u\n",
+			v4l2_format_name(fmt.fmt.meta.dataformat), fmt.fmt.meta.dataformat,
+					 fmt.fmt.meta.buffersize);
 	} else {
 		printf("Video format set: %s (%08x) %ux%u (stride %u) field %s buffer size %u\n",
 			v4l2_format_name(fmt.fmt.pix.pixelformat), fmt.fmt.pix.pixelformat,
@@ -2145,6 +2190,7 @@ int main(int argc, char *argv[])
 		video_enum_formats(&dev, V4L2_BUF_TYPE_VIDEO_OUTPUT);
 		video_enum_formats(&dev, V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE);
 		video_enum_formats(&dev, V4L2_BUF_TYPE_VIDEO_OVERLAY);
+		video_enum_formats(&dev, V4L2_BUF_TYPE_META_CAPTURE);
 	}
 
 	if (do_enum_inputs) {
