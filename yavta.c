@@ -1334,6 +1334,31 @@ static int video_parse_control_array(const struct v4l2_query_ext_ctrl *query,
 	__u32 value;
 
 	for ( ; isspace(*val); ++val) { };
+
+	if (*val == '<') {
+		/* Read the control value from the given file. */
+		ssize_t size;
+		int fd;
+
+		val++;
+		fd = open(val, O_RDONLY);
+		if (fd < 0) {
+			printf("unable to open control file `%s'\n", val);
+			return -EINVAL;
+		}
+
+		size = read(fd, ctrl->ptr, ctrl->size);
+		if (size != (ssize_t)ctrl->size) {
+			printf("error reading control file `%s' (%s)\n", val,
+			       strerror(errno));
+			close(fd);
+			return -EINVAL;
+		}
+
+		close(fd);
+		return 0;
+	}
+
 	if (*val++ != '{')
 		return -EINVAL;
 
