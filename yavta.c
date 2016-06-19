@@ -25,12 +25,14 @@
 #include <fcntl.h>
 #include <inttypes.h>
 #include <unistd.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <getopt.h>
 #include <sched.h>
+#include <termios.h>
 #include <time.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
@@ -80,6 +82,123 @@ struct device
 
 	bool write_data_prefix;
 };
+
+/* -----------------------------------------------------------------------------
+ * Pause Handling
+ */
+
+static bool pause_resume;
+static struct termios pause_term;
+static bool pause_no_term;
+static bool pause_term_configured;
+static char pause_filename[23];
+
+static void pause_signal_handler(int signal __attribute__((__unused__)))
+{
+	pause_resume = true;
+}
+
+static void pause_wait(void)
+{
+	int ret;
+	int fd;
+
+	fd = open(pause_filename, O_CREAT, 0);
+	if (fd != -1)
+		close(fd);
+
+	if (pause_no_term) {
+		printf("Paused waiting for SIGUSR1\n");
+		while (!pause_resume)
+			pause();
+
+		goto done;
+	}
+
+	printf("Paused waiting for key press or SIGUSR1\n");
+	pause_resume = false;
+
+	while (!pause_resume) {
+		fd_set rfds;
+		char c;
+
+		FD_ZERO(&rfds);
+		FD_SET(0, &rfds);
+
+		ret = select(1, &rfds, NULL, NULL, NULL);
+		if (ret < 0 && errno != EINTR)
+			break;
+
+		if (ret == 1) {
+			ret = read(0, &c, 1);
+			break;
+		}
+	}
+
+done:
+	unlink(pause_filename);
+}
+
+static void pause_cleanup(void)
+{
+	if (pause_term_configured)
+		tcsetattr(0, TCSANOW, &pause_term);
+
+	unlink(pause_filename);
+}
+
+static int pause_init(void)
+{
+	struct sigaction sig_usr1;
+	struct termios term;
+	int ret;
+
+	sprintf(pause_filename, ".yavta.wait.%u", getpid());
+
+	memset(&sig_usr1, 0, sizeof(sig_usr1));
+	sig_usr1.sa_handler = pause_signal_handler;
+	ret = sigaction(SIGUSR1, &sig_usr1, NULL);
+	if (ret < 0) {
+		printf("Unable to install SIGUSR1 handler: %s (%d)\n",
+		       strerror(errno), errno);
+		return -errno;
+	}
+
+	ret = tcgetattr(0, &term);
+	if (ret < 0) {
+		if (errno == ENOTTY) {
+			pause_no_term = true;
+			return 0;
+		}
+
+		printf("Unable to retrieve terminal attributes: %s (%d)\n",
+		       strerror(errno), errno);
+		return -errno;
+	}
+
+	pause_term = term;
+	pause_term_configured = true;
+
+	atexit(pause_cleanup);
+
+	term.c_lflag &= ~ICANON;
+	term.c_lflag &= ~ECHO;
+	term.c_cc[VMIN] = 0;
+	term.c_cc[VTIME] = 0;
+
+	ret = tcsetattr(0, TCSANOW, &term);
+	if (ret < 0) {
+		printf("Unable to set terminal attributes: %s (%d)\n",
+		       strerror(errno), errno);
+		return -errno;
+	}
+
+	return 0;
+}
+
+/* -----------------------------------------------------------------------------
+ * Pause Handling
+ */
 
 static bool video_is_mplane(struct device *dev)
 {
@@ -1988,8 +2107,9 @@ unsigned int video_buffer_bytes_used(struct device *dev, struct v4l2_buffer *buf
 }
 
 static int video_do_capture(struct device *dev, unsigned int nframes,
-	unsigned int skip, unsigned int delay, const char *pattern,
-	int do_requeue_last, int do_queue_late, enum buffer_fill_mode fill)
+	unsigned int skip, unsigned int delay, unsigned int pause,
+	const char *pattern, int do_requeue_last, int do_queue_late,
+	enum buffer_fill_mode fill)
 {
 	struct v4l2_plane planes[VIDEO_MAX_PLANES];
 	struct v4l2_buffer buf;
@@ -2001,6 +2121,9 @@ static int video_do_capture(struct device *dev, unsigned int nframes,
 	double bps;
 	double fps;
 	int ret;
+
+	if (pause == 0)
+		pause_wait();
 
 	/* Start streaming. */
 	ret = video_enable(dev, 1);
@@ -2017,6 +2140,7 @@ static int video_do_capture(struct device *dev, unsigned int nframes,
 
 	for (i = 0; i < nframes; ++i) {
 		const char *ts_type, *ts_source;
+
 		/* Dequeue a buffer. */
 		memset(&buf, 0, sizeof buf);
 		memset(planes, 0, sizeof planes);
@@ -2072,6 +2196,9 @@ static int video_do_capture(struct device *dev, unsigned int nframes,
 			usleep(delay * 1000);
 
 		fflush(stdout);
+
+		if (pause == i + 1)
+			pause_wait();
 
 		if (i >= nframes - dev->nbufs && !do_requeue_last)
 			continue;
@@ -2139,7 +2266,7 @@ static void usage(const char *argv0)
 	printf("-I, --fill-frames		Fill frames with check pattern before queuing them\n");
 	printf("-l, --list-controls		List available controls\n");
 	printf("-n, --nbufs n			Set the number of video buffers\n");
-	printf("-p, --pause			Pause before starting the video stream\n");
+	printf("-p, --pause[=n]			Pause after n frames (0 if n isn't specified)\n");
 	printf("-q, --quality n			MJPEG quality (0-100)\n");
 	printf("-r, --get-control ctrl		Get control 'ctrl'\n");
 	printf("-R, --realtime=[priority]	Enable realtime RR scheduling\n");
@@ -2205,7 +2332,7 @@ static struct option opts[] = {
 	{"nbufs", 1, 0, 'n'},
 	{"no-query", 0, 0, OPT_NO_QUERY},
 	{"offset", 1, 0, OPT_USERPTR_OFFSET},
-	{"pause", 0, 0, 'p'},
+	{"pause", 2, 0, 'p'},
 	{"premultiplied", 0, 0, OPT_PREMULTIPLIED},
 	{"quality", 1, 0, 'q'},
 	{"queue-late", 0, 0, OPT_QUEUE_LATE},
@@ -2234,7 +2361,7 @@ int main(int argc, char *argv[])
 	const struct v4l2_format_info *info;
 	/* Use video capture by default if query isn't done. */
 	unsigned int capabilities = V4L2_CAP_VIDEO_CAPTURE;
-	int do_file = 0, do_capture = 0, do_pause = 0;
+	int do_file = 0, do_capture = 0;
 	int do_set_time_per_frame = 0;
 	int do_enum_formats = 0, do_set_format = 0;
 	int do_enum_inputs = 0, do_set_input = 0;
@@ -2263,6 +2390,7 @@ int main(int argc, char *argv[])
 	unsigned int skip = 0;
 	unsigned int quality = (unsigned int)-1;
 	unsigned int userptr_offset = 0;
+	unsigned int pause_count = (unsigned int)-1;
 	struct v4l2_fract time_per_frame = {1, 25};
 	enum v4l2_field field = V4L2_FIELD_ANY;
 
@@ -2276,7 +2404,7 @@ int main(int argc, char *argv[])
 	video_init(&dev);
 
 	opterr = 0;
-	while ((c = getopt_long(argc, argv, "B:c::Cd:f:F::hi:Iln:pq:r:R::s:t:uw:", opts, NULL)) != -1) {
+	while ((c = getopt_long(argc, argv, "B:c::Cd:f:F::hi:Iln:p::q:r:R::s:t:uw:", opts, NULL)) != -1) {
 
 		switch (c) {
 		case 'B':
@@ -2335,7 +2463,10 @@ int main(int argc, char *argv[])
 				nbufs = V4L_BUFFERS_MAX;
 			break;
 		case 'p':
-			do_pause = 1;
+			if (optarg)
+				pause_count = atoi(optarg);
+			else
+				pause_count = 0;
 			break;
 		case 'q':
 			quality = atoi(optarg);
@@ -2466,6 +2597,12 @@ int main(int argc, char *argv[])
 		}
 	}
 
+	if (pause_count != (unsigned int)-1) {
+		ret = pause_init();
+		if (ret < 0)
+			return 1;
+	}
+
 	if ((fill_mode & BUFFER_FILL_PADDING) && memtype != V4L2_MEMORY_USERPTR) {
 		printf("Buffer overrun can only be checked in USERPTR mode.\n");
 		return 1;
@@ -2585,11 +2722,6 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
-	if (do_pause) {
-		printf("Press enter to start capture\n");
-		getchar();
-	}
-
 	if (do_rt) {
 		memset(&sched, 0, sizeof sched);
 		sched.sched_priority = rt_priority;
@@ -2599,7 +2731,7 @@ int main(int argc, char *argv[])
 				strerror(errno), errno);
 	}
 
-	if (video_do_capture(&dev, nframes, skip, delay, filename,
+	if (video_do_capture(&dev, nframes, skip, delay, pause_count, filename,
 			     do_requeue_last, do_queue_late, fill_mode) < 0) {
 		video_close(&dev);
 		return 1;
