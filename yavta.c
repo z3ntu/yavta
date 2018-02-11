@@ -585,10 +585,63 @@ static void set_control(struct device *dev, unsigned int id,
 	       id, old_val, val);
 }
 
+static void video_store_format(struct device *dev, const struct v4l2_format *fmt,
+			       bool set)
+{
+	unsigned int i;
+
+	if (video_is_mplane(dev)) {
+		dev->width = fmt->fmt.pix_mp.width;
+		dev->height = fmt->fmt.pix_mp.height;
+		dev->num_planes = fmt->fmt.pix_mp.num_planes;
+
+		printf("Video format%s: %s (%08x) %ux%u field %s, %u planes: \n",
+			set ? " set" : "",
+			v4l2_format_name(fmt->fmt.pix_mp.pixelformat), fmt->fmt.pix_mp.pixelformat,
+			fmt->fmt.pix_mp.width, fmt->fmt.pix_mp.height,
+			v4l2_field_name(fmt->fmt.pix_mp.field),
+			fmt->fmt.pix_mp.num_planes);
+
+		for (i = 0; i < fmt->fmt.pix_mp.num_planes; i++) {
+			dev->plane_fmt[i].bytesperline =
+					fmt->fmt.pix_mp.plane_fmt[i].bytesperline;
+			dev->plane_fmt[i].sizeimage =
+					fmt->fmt.pix_mp.plane_fmt[i].bytesperline ?
+						fmt->fmt.pix_mp.plane_fmt[i].sizeimage : 0;
+
+			printf(" * Stride %u, buffer size %u\n",
+				fmt->fmt.pix_mp.plane_fmt[i].bytesperline,
+				fmt->fmt.pix_mp.plane_fmt[i].sizeimage);
+		}
+	} else if (video_is_meta(dev)) {
+		dev->width = 0;
+		dev->height = 0;
+		dev->num_planes = 1;
+
+		printf("Meta-data format%s: %s (%08x) buffer size %u\n",
+			set ? " set" : "",
+			v4l2_format_name(fmt->fmt.meta.dataformat), fmt->fmt.meta.dataformat,
+					 fmt->fmt.meta.buffersize);
+	} else {
+		dev->width = fmt->fmt.pix.width;
+		dev->height = fmt->fmt.pix.height;
+		dev->num_planes = 1;
+
+		dev->plane_fmt[0].bytesperline = fmt->fmt.pix.bytesperline;
+		dev->plane_fmt[0].sizeimage = fmt->fmt.pix.bytesperline ? fmt->fmt.pix.sizeimage : 0;
+
+		printf("Video format%s: %s (%08x) %ux%u (stride %u) field %s buffer size %u\n",
+			set ? " set" : "",
+			v4l2_format_name(fmt->fmt.pix.pixelformat), fmt->fmt.pix.pixelformat,
+			fmt->fmt.pix.width, fmt->fmt.pix.height, fmt->fmt.pix.bytesperline,
+			v4l2_field_name(fmt->fmt.pix_mp.field),
+			fmt->fmt.pix.sizeimage);
+	}
+}
+
 static int video_get_format(struct device *dev)
 {
 	struct v4l2_format fmt;
-	unsigned int i;
 	int ret;
 
 	memset(&fmt, 0, sizeof fmt);
@@ -601,50 +654,7 @@ static int video_get_format(struct device *dev)
 		return ret;
 	}
 
-	if (video_is_mplane(dev)) {
-		dev->width = fmt.fmt.pix_mp.width;
-		dev->height = fmt.fmt.pix_mp.height;
-		dev->num_planes = fmt.fmt.pix_mp.num_planes;
-
-		printf("Video format: %s (%08x) %ux%u field %s, %u planes: \n",
-			v4l2_format_name(fmt.fmt.pix_mp.pixelformat), fmt.fmt.pix_mp.pixelformat,
-			fmt.fmt.pix_mp.width, fmt.fmt.pix_mp.height,
-			v4l2_field_name(fmt.fmt.pix_mp.field),
-			fmt.fmt.pix_mp.num_planes);
-
-		for (i = 0; i < fmt.fmt.pix_mp.num_planes; i++) {
-			dev->plane_fmt[i].bytesperline =
-					fmt.fmt.pix_mp.plane_fmt[i].bytesperline;
-			dev->plane_fmt[i].sizeimage =
-					fmt.fmt.pix_mp.plane_fmt[i].bytesperline ?
-						fmt.fmt.pix_mp.plane_fmt[i].sizeimage : 0;
-
-			printf(" * Stride %u, buffer size %u\n",
-				fmt.fmt.pix_mp.plane_fmt[i].bytesperline,
-				fmt.fmt.pix_mp.plane_fmt[i].sizeimage);
-		}
-	} else if (video_is_meta(dev)) {
-		dev->width = 0;
-		dev->height = 0;
-		dev->num_planes = 1;
-
-		printf("Meta-data format: %s (%08x) buffer size %u\n",
-			v4l2_format_name(fmt.fmt.meta.dataformat), fmt.fmt.meta.dataformat,
-					 fmt.fmt.meta.buffersize);
-	} else {
-		dev->width = fmt.fmt.pix.width;
-		dev->height = fmt.fmt.pix.height;
-		dev->num_planes = 1;
-
-		dev->plane_fmt[0].bytesperline = fmt.fmt.pix.bytesperline;
-		dev->plane_fmt[0].sizeimage = fmt.fmt.pix.bytesperline ? fmt.fmt.pix.sizeimage : 0;
-
-		printf("Video format: %s (%08x) %ux%u (stride %u) field %s buffer size %u\n",
-			v4l2_format_name(fmt.fmt.pix.pixelformat), fmt.fmt.pix.pixelformat,
-			fmt.fmt.pix.width, fmt.fmt.pix.height, fmt.fmt.pix.bytesperline,
-			v4l2_field_name(fmt.fmt.pix_mp.field),
-			fmt.fmt.pix.sizeimage);
-	}
+	video_store_format(dev, &fmt, false);
 
 	return 0;
 }
@@ -696,29 +706,7 @@ static int video_set_format(struct device *dev, unsigned int w, unsigned int h,
 		return ret;
 	}
 
-	if (video_is_mplane(dev)) {
-		printf("Video format set: %s (%08x) %ux%u field %s, %u planes: \n",
-			v4l2_format_name(fmt.fmt.pix_mp.pixelformat), fmt.fmt.pix_mp.pixelformat,
-			fmt.fmt.pix_mp.width, fmt.fmt.pix_mp.height,
-			v4l2_field_name(fmt.fmt.pix_mp.field),
-			fmt.fmt.pix_mp.num_planes);
-
-		for (i = 0; i < fmt.fmt.pix_mp.num_planes; i++) {
-			printf(" * Stride %u, buffer size %u\n",
-				fmt.fmt.pix_mp.plane_fmt[i].bytesperline,
-				fmt.fmt.pix_mp.plane_fmt[i].sizeimage);
-		}
-	} else if (video_is_meta(dev)) {
-		printf("Meta-data format: %s (%08x) buffer size %u\n",
-			v4l2_format_name(fmt.fmt.meta.dataformat), fmt.fmt.meta.dataformat,
-					 fmt.fmt.meta.buffersize);
-	} else {
-		printf("Video format set: %s (%08x) %ux%u (stride %u) field %s buffer size %u\n",
-			v4l2_format_name(fmt.fmt.pix.pixelformat), fmt.fmt.pix.pixelformat,
-			fmt.fmt.pix.width, fmt.fmt.pix.height, fmt.fmt.pix.bytesperline,
-			v4l2_field_name(fmt.fmt.pix.field),
-			fmt.fmt.pix.sizeimage);
-	}
+	video_store_format(dev, &fmt, true);
 
 	return 0;
 }
