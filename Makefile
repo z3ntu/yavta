@@ -1,7 +1,7 @@
 CROSS_COMPILE ?=
 
 CC	:= $(CROSS_COMPILE)gcc
-CFLAGS	?= -O2 -W -Wall -Iinclude
+CFLAGS	+= -O2 -W -Wall -Iinclude
 LDFLAGS	?=
 LIBS	:= -lrt
 
