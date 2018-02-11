@@ -37,6 +37,7 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 
+#include <linux/ion.h>
 #include <linux/videodev2.h>
 
 #ifndef V4L2_BUF_FLAG_ERROR
@@ -58,11 +59,13 @@ struct buffer
 	unsigned int padding[VIDEO_MAX_PLANES];
 	unsigned int size[VIDEO_MAX_PLANES];
 	void *mem[VIDEO_MAX_PLANES];
+	ion_user_handle_t handles[VIDEO_MAX_PLANES];
 };
 
 struct device
 {
 	int fd;
+	int ion;
 	int opened;
 
 	enum v4l2_buf_type type;
@@ -340,6 +343,7 @@ static void video_init(struct device *dev)
 {
 	memset(dev, 0, sizeof *dev);
 	dev->fd = -1;
+	dev->ion = -1;
 	dev->memtype = V4L2_MEMORY_MMAP;
 	dev->buffers = NULL;
 	dev->type = (enum v4l2_buf_type)-1;
@@ -817,6 +821,40 @@ static int video_buffer_munmap(struct device *dev, struct buffer *buffer)
 	return 0;
 }
 
+static int video_buffer_alloc_ion(struct device *dev, size_t len, void **mem,
+				  ion_user_handle_t *handle)
+{
+	struct ion_allocation_data ion_alloc = {
+		.len = len,
+		.heap_id_mask = ION_HEAP_TYPE_DMA_MASK,
+	};
+	struct ion_fd_data ion_map = { 0, };
+	int ret;
+
+	ret = ioctl(dev->ion, ION_IOC_ALLOC, &ion_alloc);
+	if (ret < 0) {
+		printf("ION allocation of %zu bytes failed: %s (%d)\n", len,
+		       strerror(errno), errno);
+		return -errno;
+	}
+
+	*handle = ion_alloc.handle;
+	ion_map.handle = ion_alloc.handle;
+	ret = ioctl(dev->ion, ION_IOC_MAP, &ion_map);
+	if (ret < 0) {
+		printf("ION map failed: %s (%d)\n", strerror(errno), errno);
+		return -errno;
+	}
+
+	*mem = mmap(0, len, PROT_READ | PROT_WRITE, MAP_SHARED, ion_map.fd, 0);
+	if (*mem == MAP_FAILED) {
+		printf("ION mmap failed: %s (%d)\n", strerror(errno), errno);
+		return -errno;
+	}
+
+	return 0;
+}
+
 static int video_buffer_alloc_userptr(struct device *dev, struct buffer *buffer,
 				      struct v4l2_buffer *v4l2buf,
 				      unsigned int offset, unsigned int padding)
@@ -832,8 +870,14 @@ static int video_buffer_alloc_userptr(struct device *dev, struct buffer *buffer,
 		else
 			length = v4l2buf->length;
 
-		ret = posix_memalign(&buffer->mem[i], page_size,
-				     length + offset + padding);
+		if (dev->ion != -1)
+			ret = video_buffer_alloc_ion(dev, length + offset + padding,
+						     &buffer->mem[i],
+						     &buffer->handles[i]);
+		else
+			ret = posix_memalign(&buffer->mem[i], page_size,
+					     length + offset + padding);
+
 		if (ret < 0) {
 			printf("Unable to allocate buffer %u/%u (%d)\n",
 			       buffer->idx, i, ret);
@@ -856,7 +900,17 @@ static void video_buffer_free_userptr(struct device *dev, struct buffer *buffer)
 	unsigned int i;
 
 	for (i = 0; i < dev->num_planes; i++) {
-		free(buffer->mem[i]);
+		if (dev->ion != -1) {
+			struct ion_handle_data ion_free = {
+				.handle = buffer->handles[i],
+			};
+
+			munmap(buffer->mem[i], buffer->size[i]);
+			ioctl(dev->ion, ION_IOC_FREE, &ion_free);
+		} else {
+			free(buffer->mem[i]);
+		}
+
 		buffer->mem[i] = NULL;
 	}
 }
@@ -925,6 +979,15 @@ static int video_alloc_buffers(struct device *dev, int nbufs,
 	}
 
 	printf("%u buffers requested.\n", rb.count);
+
+	if (dev->memtype == V4L2_MEMORY_USERPTR) {
+		dev->ion = open("/dev/ion", O_RDWR);
+		if (dev->ion < 0) {
+			printf("Unable to open ION device: %s (%d).\n", strerror(errno),
+				errno);
+			return dev->ion;
+		}
+	}
 
 	buffers = malloc(rb.count * sizeof buffers[0]);
 	if (buffers == NULL)
