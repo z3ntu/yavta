@@ -345,7 +345,6 @@ static bool video_has_valid_buf_type(struct device *dev)
 
 static void video_init(struct device *dev)
 {
-	memset(dev, 0, sizeof *dev);
 	dev->fd = -1;
 	dev->memtype = V4L2_MEMORY_MMAP;
 	dev->buffers = NULL;
@@ -1910,7 +1909,7 @@ static struct option opts[] = {
 int main(int argc, char *argv[])
 {
 	struct sched_param sched;
-	struct device dev;
+	struct device dev = { 0 };
 	int ret;
 
 	/* Options parsings */
