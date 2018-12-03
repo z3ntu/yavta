@@ -527,7 +527,8 @@ static int query_control(struct device *dev, unsigned int id,
 
 static int get_control(struct device *dev,
 		       const struct v4l2_query_ext_ctrl *query,
-		       struct v4l2_ext_control *ctrl)
+		       struct v4l2_ext_control *ctrl,
+		       unsigned int which)
 {
 	struct v4l2_ext_controls ctrls;
 	struct v4l2_control old;
@@ -536,7 +537,7 @@ static int get_control(struct device *dev,
 	memset(&ctrls, 0, sizeof(ctrls));
 	memset(ctrl, 0, sizeof(*ctrl));
 
-	ctrls.ctrl_class = V4L2_CTRL_ID2CLASS(query->id);
+	ctrls.which = which;
 	ctrls.count = 1;
 	ctrls.controls = ctrl;
 
@@ -1295,7 +1296,7 @@ static int video_get_control(struct device *dev,
 
 	printf("current ");
 
-	ret = get_control(dev, query, &ctrl);
+	ret = get_control(dev, query, &ctrl, V4L2_CTRL_WHICH_CUR_VAL);
 	if (ret < 0) {
 		printf("n/a\n");
 		printf("unable to get control 0x%8.8x: %s (%d).\n",
@@ -1476,6 +1477,51 @@ static void video_list_controls(struct device *dev)
 		printf("%u control%s found.\n", ret, ret > 1 ? "s" : "");
 	else
 		printf("No control found.\n");
+}
+
+static int video_reset_control(struct device *dev,
+			       const struct v4l2_query_ext_ctrl *query)
+{
+       struct v4l2_ext_control ctrl = { .value = query->default_value, };
+       int ret;
+
+	if (query->flags & V4L2_CTRL_FLAG_DISABLED)
+		return 0;
+
+	if (query->type == V4L2_CTRL_TYPE_CTRL_CLASS)
+		return 0;
+
+	/*
+	 * For controls with payloads the default value must be retrieved with
+	 * a VIDIOC_G_EXT_CTRLS call. If the V4L2_CTRL_WHICH_DEF_VAL flag isn't
+	 * supported by the kernel (it got introduced in v4.5, while controls
+	 * with payloads were introduced in v3.17), there isn't much we can do,
+	 * so skip resetting the control.
+	 */
+	if (query->flags & V4L2_CTRL_FLAG_HAS_PAYLOAD) {
+		ret = get_control(dev, query, &ctrl, V4L2_CTRL_WHICH_DEF_VAL);
+		if (ret < 0)
+			return 0;
+	}
+
+	set_control(dev, query, &ctrl);
+
+	if (query->flags & V4L2_CTRL_FLAG_HAS_PAYLOAD)
+		free(ctrl.ptr);
+
+	return 1;
+}
+
+static void video_reset_controls(struct device *dev)
+{
+	int ret;
+
+	ret = video_for_each_control(dev, video_reset_control);
+	if (ret < 0)
+		return;
+
+	if (ret)
+		printf("%u control%s reset.\n", ret, ret > 1 ? "s" : "");
 }
 
 static void video_enum_frame_intervals(struct device *dev, __u32 pixelformat,
@@ -2099,6 +2145,7 @@ static void usage(const char *argv0)
 	printf("    --premultiplied		Color components are premultiplied by alpha value\n");
 	printf("    --queue-late		Queue buffers after streamon, not before\n");
 	printf("    --requeue-last		Requeue the last buffers before streamoff\n");
+	printf("    --reset-controls		Reset all available controls to their default value\n");
 	printf("    --timestamp-source		Set timestamp source on output buffers [eof, soe]\n");
 	printf("    --skip n			Skip the first n frames\n");
 	printf("    --sleep-forever		Sleep forever after configuring the device\n");
@@ -2121,6 +2168,7 @@ static void usage(const char *argv0)
 #define OPT_PREMULTIPLIED	269
 #define OPT_QUEUE_LATE		270
 #define OPT_DATA_PREFIX		271
+#define OPT_RESET_CONTROLS	272
 
 static struct option opts[] = {
 	{"buffer-size", 1, 0, OPT_BUFFER_SIZE},
@@ -2149,6 +2197,7 @@ static struct option opts[] = {
 	{"queue-late", 0, 0, OPT_QUEUE_LATE},
 	{"get-control", 1, 0, 'r'},
 	{"requeue-last", 0, 0, OPT_REQUEUE_LAST},
+	{"reset-controls", 0, 0, OPT_RESET_CONTROLS},
 	{"realtime", 2, 0, 'R'},
 	{"size", 1, 0, 's'},
 	{"set-control", 1, 0, 'w'},
@@ -2176,6 +2225,7 @@ int main(int argc, char *argv[])
 	int do_enum_formats = 0, do_set_format = 0;
 	int do_enum_inputs = 0, do_set_input = 0;
 	int do_list_controls = 0, do_get_control = 0, do_set_control = 0;
+	int do_reset_controls = 0;
 	int do_sleep_forever = 0, do_requeue_last = 0;
 	int do_rt = 0, do_log_status = 0;
 	int no_query = 0, do_queue_late = 0;
@@ -2364,6 +2414,9 @@ int main(int argc, char *argv[])
 		case OPT_QUEUE_LATE:
 			do_queue_late = 1;
 			break;
+		case OPT_RESET_CONTROLS:
+			do_reset_controls = 1;
+			break;
 		case OPT_REQUEUE_LAST:
 			do_requeue_last = 1;
 			break;
@@ -2448,6 +2501,9 @@ int main(int argc, char *argv[])
 
 	if (do_list_controls)
 		video_list_controls(&dev);
+
+	if (do_reset_controls)
+		video_reset_controls(&dev);
 
 	if (do_enum_formats) {
 		printf("- Available formats:\n");
