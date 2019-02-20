@@ -1368,7 +1368,7 @@ static void video_print_control_value(const struct v4l2_query_ext_ctrl *query,
 		video_print_control_array(query, ctrl);
 		break;
 	default:
-		printf("unsupported");
+		printf("unsupported type %u", query->type);
 		break;
 	}
 }
