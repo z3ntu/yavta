@@ -1505,9 +1505,10 @@ static int video_parse_control_array(const struct v4l2_query_ext_ctrl *query,
 
 		val = endptr;
 		for ( ; isspace(*val); ++val) { };
-		if (*val++ != ',')
+		if (*val != ',')
 			break;
-	} 
+		val++;
+	}
 
 	if (i < query->elems - 1)
 		return -EINVAL;
