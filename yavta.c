@@ -40,10 +40,6 @@
 
 #include <linux/videodev2.h>
 
-#ifndef V4L2_BUF_FLAG_ERROR
-#define V4L2_BUF_FLAG_ERROR	0x0040
-#endif
-
 #define ARRAY_SIZE(a)	(sizeof(a)/sizeof((a)[0]))
 
 enum buffer_fill_mode
@@ -1142,16 +1138,9 @@ static int video_for_each_control(struct device *dev,
 	unsigned int id;
 	int ret;
 
-#ifndef V4L2_CTRL_FLAG_NEXT_CTRL
-	unsigned int i;
-
-	for (i = V4L2_CID_BASE; i <= V4L2_CID_LASTP1; ++i) {
-		id = i;
-#else
 	id = 0;
 	while (1) {
 		id |= V4L2_CTRL_FLAG_NEXT_CTRL | V4L2_CTRL_FLAG_NEXT_COMPOUND;
-#endif
 
 		ret = query_control(dev, id, &query);
 		if (ret == -EINVAL)
