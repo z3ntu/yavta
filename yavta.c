@@ -637,6 +637,12 @@ static int query_control(struct device *dev, unsigned int id,
 	query->default_value = q.default_value;
 	query->flags = q.flags;
 
+	if (q.type == V4L2_CTRL_TYPE_STRING &&
+	    !(q.flags & V4L2_CTRL_FLAG_HAS_PAYLOAD)) {
+		query->elem_size = q.maximum + 1;
+		query->elems = 1;
+	}
+
 	return 0;
 }
 
