@@ -1447,7 +1447,7 @@ static int video_parse_control_array(const struct v4l2_query_ext_ctrl *query,
 	char *endptr;
 	__u32 value;
 
-	for ( ; isspace(*val); ++val) { };
+	for ( ; isspace(*val); ++val) { }
 
 	if (*val == '<') {
 		/* Read the control value from the given file. */
@@ -1477,7 +1477,7 @@ static int video_parse_control_array(const struct v4l2_query_ext_ctrl *query,
 		return -EINVAL;
 
 	for (i = 0; i < query->elems; ++i) {
-		for ( ; isspace(*val); ++val) { };
+		for ( ; isspace(*val); ++val) { }
 
 		switch (query->type) {
 		case V4L2_CTRL_TYPE_U8:
@@ -1504,7 +1504,7 @@ static int video_parse_control_array(const struct v4l2_query_ext_ctrl *query,
 		}
 
 		val = endptr;
-		for ( ; isspace(*val); ++val) { };
+		for ( ; isspace(*val); ++val) { }
 		if (*val != ',')
 			break;
 		val++;
@@ -1513,11 +1513,11 @@ static int video_parse_control_array(const struct v4l2_query_ext_ctrl *query,
 	if (i < query->elems - 1)
 		return -EINVAL;
 
-	for ( ; isspace(*val); ++val) { };
+	for ( ; isspace(*val); ++val) { }
 	if (*val++ != '}')
 		return -EINVAL;
 
-	for ( ; isspace(*val); ++val) { };
+	for ( ; isspace(*val); ++val) { }
 	if (*val++ != '\0')
 		return -EINVAL;
 
