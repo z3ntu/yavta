@@ -5,6 +5,8 @@ CFLAGS	?= -O2 -W -Wall -Iinclude
 LDFLAGS	?=
 LIBS	:= -lrt
 
+$(warning WARNING: Makefile support is deprecated, please switch to meson)
+
 %.o : %.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
