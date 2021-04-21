@@ -2290,7 +2290,9 @@ static void usage(const char *argv0)
 	printf("    --enum-formats		Enumerate formats\n");
 	printf("    --enum-inputs		Enumerate inputs\n");
 	printf("    --fd                        Use a numeric file descriptor insted of a device\n");
-	printf("    --field			Interlaced format field order\n");
+	printf("    --field field		Set the format field order\n");
+	printf("\tValid values for field are none, top, bottom, interlaced, seq-tb, seq-bt,\n");
+	printf("\talternate, interlaced-tb and interlaced-bt.\n");
 	printf("    --log-status		Log device status\n");
 	printf("    --no-query			Don't query capabilities on open\n");
 	printf("    --offset			User pointer buffer offset from page start\n");
