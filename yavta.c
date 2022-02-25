@@ -307,6 +307,7 @@ static struct v4l2_format_info {
 	{ "VYUY", V4L2_PIX_FMT_VYUY, 1 },
 	{ "YUYV", V4L2_PIX_FMT_YUYV, 1 },
 	{ "YVYU", V4L2_PIX_FMT_YVYU, 1 },
+	{ "YUV32", V4L2_PIX_FMT_YUV32, 1 },
 	{ "NV12", V4L2_PIX_FMT_NV12, 1 },
 	{ "NV12M", V4L2_PIX_FMT_NV12M, 2 },
 	{ "NV21", V4L2_PIX_FMT_NV21, 1 },
