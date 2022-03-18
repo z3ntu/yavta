@@ -2256,7 +2256,8 @@ static int video_do_capture(struct device *dev, unsigned int nframes,
 		i, ts.tv_sec, ts.tv_nsec/1000, fps, bps);
 
 done:
-	return video_free_buffers(dev);
+	video_free_buffers(dev);
+	return ret;
 }
 
 #define V4L_BUFFERS_DEFAULT	8
