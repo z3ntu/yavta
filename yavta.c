@@ -1315,7 +1315,8 @@ static void video_query_menu(struct device *dev,
 			printf("  %u: %.32s%s\n", menu.index, menu.name,
 			       menu.index == value ? " (*)" : "");
 		else
-			printf("  %u: %lld%s\n", menu.index, menu.value,
+			printf("  %u: %" PRId64 "%s\n", menu.index,
+			       (int64_t)menu.value,
 			       menu.index == value ? " (*)" : "");
 	};
 }
@@ -1362,7 +1363,7 @@ static void video_print_control_value(const struct v4l2_query_ext_ctrl *query,
 			printf("0x%08x", ctrl->value);
 			break;
 		case V4L2_CTRL_TYPE_INTEGER64:
-			printf("%lld", ctrl->value64);
+			printf("%" PRId64, (int64_t)ctrl->value64);
 			break;
 		case V4L2_CTRL_TYPE_STRING:
 			printf("%s", ctrl->string);
@@ -1401,9 +1402,10 @@ static int video_get_control(struct device *dev,
 	}
 
 	if (full) {
-		printf("control 0x%08x `%s' min %lld max %lld step %lld default %lld ",
-			query->id, query->name, query->minimum, query->maximum,
-			query->step, query->default_value);
+		printf("control 0x%08x `%s' min %" PRId64 " max %" PRId64 " step %" PRIu64 " default %" PRId64 " ",
+		       query->id, query->name, (int64_t)query->minimum,
+		       (int64_t)query->maximum, (uint64_t)query->step,
+		       (int64_t)query->default_value);
 		if (query->nr_of_dims) {
 			for (i = 0; i < query->nr_of_dims; ++i)
 				printf("[%u]", query->dims[i]);
@@ -2192,13 +2194,16 @@ static int video_do_capture(struct device *dev, unsigned int nframes,
 
 		clock_gettime(CLOCK_MONOTONIC, &ts);
 		get_ts_flags(buf.flags, &ts_type, &ts_source);
-		printf("%u (%u) [%c] %s %u %u B %ld.%06ld %ld.%06ld %.3f fps ts %s/%s\n", i, buf.index,
-			(buf.flags & V4L2_BUF_FLAG_ERROR) ? 'E' : '-',
-			v4l2_field_name(buf.field),
-			buf.sequence, video_buffer_bytes_used(dev, &buf),
-			buf.timestamp.tv_sec, buf.timestamp.tv_usec,
-			ts.tv_sec, ts.tv_nsec/1000, fps,
-			ts_type, ts_source);
+		printf("%u (%u) [%c] %s %u %u B %" PRId64 ".%06" PRId64 " %" PRId64 ".%06" PRId64 " %.3f fps ts %s/%s\n",
+		       i, buf.index,
+		       (buf.flags & V4L2_BUF_FLAG_ERROR) ? 'E' : '-',
+		       v4l2_field_name(buf.field),
+		       buf.sequence, video_buffer_bytes_used(dev, &buf),
+		       (int64_t)buf.timestamp.tv_sec,
+		       (int64_t)buf.timestamp.tv_usec,
+		       (int64_t)ts.tv_sec,
+		       (int64_t)(ts.tv_nsec / 1000), fps,
+		       ts_type, ts_source);
 
 		last = buf.timestamp;
 
@@ -2254,8 +2259,9 @@ static int video_do_capture(struct device *dev, unsigned int nframes,
 	bps = size/(ts.tv_nsec/1000.0+1000000.0*ts.tv_sec)*1000000.0;
 	fps = i/(ts.tv_nsec/1000.0+1000000.0*ts.tv_sec)*1000000.0;
 
-	printf("Captured %u frames in %lu.%06lu seconds (%f fps, %f B/s).\n",
-		i, ts.tv_sec, ts.tv_nsec/1000, fps, bps);
+	printf("Captured %u frames in %" PRId64 ".%06" PRId64 " seconds (%f fps, %f B/s).\n",
+	       i, (int64_t)ts.tv_sec, (int64_t)(ts.tv_nsec / 1000), fps,
+	       bps);
 
 done:
 	video_free_buffers(dev);
